@@ -1,73 +1,89 @@
-const puppeteer = require('puppeteer');
-const dotenv = require('dotenv');
+require("dotenv").config();
+const puppeteer = require("puppeteer");
+const Instauto = require("instauto");
 
-dotenv.config();
+const options = {
+    cookiesPath: "./database/cookies.json",
 
-const loginID = async (page) => {
+    username: process.env.USER_NAME,
+    password: process.env.PASSWORD,
 
-    try {
+    //Set restrictions you want
+    //Dont set too high because instagram can
+    maxFollowsPerHour: 5,
+    maxFollowsPerDay: 20,
+    maxLikesPerDay: 50,
 
-        await page.waitForSelector('input[name="username"]');
-        const username = await page.$('input[name="username"]');
-        await username.type(process.env.USER_NAME);
+    followUserRatioMin: 0.8,
+    followUserRatioMax: 5.0,
 
-        await page.waitForSelector('input[name="password"]');
-        const password = await page.$('input[name="password"]');
-        await password.type(process.env.PASSWORD);
+    followUserMaxFollowers: null,
+    followUserMaxFollowing: null,
+    followUserMinFollowers: null,
+    followUserMinFollowing: null,
 
-        await page.waitForSelector('button[type="submit"]');
-        await page.click('button[type="submit"]');
+    dontUnfollowUntilTimeElapsed: 3 * 24 * 60 * 60 * 1000,
+    excludeUsers: [],
 
-    } catch (error) {
-        console.log(error);
-    }
-
-}
-
-const saveLoginInfo = async (page) => {
-    try {
-
-        await page.waitForSelector('main div div ._ac8f div[role="button"]');
-        await page.click('main div div ._ac8f div[role="button"]');
-
-    } catch (error) {
-        console.log(error);
-    }
-}
-
-const notificationManager = async (page) => {
-    const notification = "body > div.x1n2onr6.xzkaem6 > div.x9f619.x1n2onr6.x1ja2u2z > div > div.x1uvtmcs.x4k7w5x.x1h91t0o.x1beo9mf.xaigb6o.x12ejxvf.x3igimt.xarpa2k.xedcshv.x1lytzrv.x1t2pt76.x7ja8zs.x1n2onr6.x1qrby5j.x1jfb8zj > div > div > div > div > div.x7r02ix.xf1ldfh.x131esax.xdajt7p.xxfnqb6.xb88tzc.xw2csxc.x1odjw0f.x5fp0pe > div > div > div._a9-z > button._a9--._a9_1"
-
-    const noti = await page.waitForSelector(notification, { timeout: 120000 });
-    if (noti) {
-        await page.click(notification);
-    }
-}
+    //If dry run is true it will do everything except actions (follow, unfollow, and like)
+    dryRun: false,
+};
 
 (async () => {
+    let browser;
 
     try {
-
+        //toggle headles to true to work in background
         const browser = await puppeteer.launch({
             headless: false,
+            ignoreHTTPSErrors: true,
+            args: [`--window-size=800,736`], //window size
+            defaultViewport: {
+                width: 780, //set custom browser width in px
+                height: 736, //set custom browser height in px
+            },
         });
 
-        const page = await browser.newPage();
+        //Creating JSON databases to store data
+        const instautoDb = await Instauto.JSONDB({
+            followedDbPath: "./database/followed.json",
+            unfollowedDbPath: "./database/unfollowed.json",
+            likedPhotosDbPath: "./database/liked-photos.json",
+        });
 
-        await page.setViewport({ width: 1528, height: 755 });
-        await page.setDefaultNavigationTimeout(0);
-        await page.goto("https://www.instagram.com/");
+        const instauto = await Instauto(instautoDb, browser, options);
 
-        loginID(page);
+        //Unfollow all the users that didnt followed back
+        await instauto.unfollowNonMutualFollowers();
+        await instauto.sleep(10 * 60 * 1000);
 
-        saveLoginInfo(page);
+        //After 3 days if they dont follow, unfollow them
+        const unfollowedCount = await instauto.unfollowOldFollowed({
+            ageInDays: 3,
+            limit: options.maxFollowsPerDay * (2 / 3),
+        });
 
-        notificationManager(page);
+        if (unfollowedCount > 0) await instauto.sleep(10 * 60 * 1000);
 
-        console.log("completed");
+        const usersToFollowFollowersOf = ["photo_by.cs"];
 
-    } catch (error) {
-        console.log(error);
+        await instauto.followUsersFollowers({
+            usersToFollowFollowersOf,
+            maxFollowsTotal: options.maxFollowsPerDay - unfollowedCount,
+            skipPrivate: true,
+            enableLikeImages: true,
+            likeImagesMax: 3,
+        });
+
+        await instauto.sleep(10 * 60 * 1000);
+
+        console.log("Done running");
+
+        await instauto.sleep(30000);
+    } catch (err) {
+        console.error(err);
+    } finally {
+        console.log("Closing browser");
+        if (browser) await browser.close();
     }
-
 })();

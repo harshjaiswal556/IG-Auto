@@ -10,6 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "dotenv": "^16.3.1",
+    "instauto": "^9.2.1",
     "puppeteer": "^21.1.1"
   }
 }
